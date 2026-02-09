@@ -31,41 +31,43 @@ with tab1:
     # ---------------- CONFIG ----------------
     st.markdown("Cole abaixo o texto do pedido exatamente como recebido:")
     
-    texto = st.text_area("📋 Texto do Pedido", height=420)
+    # Inicializar session_state se necessário
+    if "texto_pedido" not in st.session_state:
+        st.session_state.texto_pedido = ""
+    
+    # ---------------- BOTÕES ----------------
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        converter = st.button("🔄 Converter para CSV", key="converter_csv")
+    
+    with col2:
+        if st.button("🧹 Limpar texto", key="limpar_texto"):
+            st.session_state.texto_pedido = ""
+            st.rerun()
+    
+    # ---------------- TEXT AREA ----------------
+    texto = st.text_area(
+        "📋 Texto do Pedido",
+        value=st.session_state.texto_pedido,
+        height=420,
+        key="texto_pedido"
+    )
     
     # ---------------- FUNÇÕES UTILITÁRIAS ----------------
     def so_numeros(valor):
         return re.sub(r"\D", "", valor or "")
     
     def parse_valor(valor_txt):
-        """
-        Converte valores nos formatos:
-        - BR: 15.406,15
-        - US: 15,406.15
-        - Simples: 15406.15 ou 15406,15
-        """
-        if not valor_txt:
-            return 0.0
-
+        """Converte valores US ou BR para float corretamente"""
         valor_txt = valor_txt.strip()
-
-        # Se tem vírgula e ponto, decide pelo ÚLTIMO separador
-        if "," in valor_txt and "." in valor_txt:
-            if valor_txt.rfind(",") > valor_txt.rfind("."):
-                # Brasileiro → 15.406,15
-                valor_txt = valor_txt.replace(".", "").replace(",", ".")
-            else:
-                # Americano → 15,406.15
-                valor_txt = valor_txt.replace(",", "")
-        elif "," in valor_txt:
-            # Só vírgula → brasileiro simples
+        
+        if "," in valor_txt:
+            # padrão BR → 2.316,75
             valor_txt = valor_txt.replace(".", "").replace(",", ".")
-        else:
-            # Só ponto → americano simples
-            valor_txt = valor_txt.replace(",", "")
-
+        # senão, padrão US → 2316.75
+        
         return float(valor_txt)
-
     
     def formatar_br(valor):
         return f"{valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
@@ -131,7 +133,7 @@ with tab1:
         return parse_valor(match.group(1)) if match else 0.0
     
     # ---------------- AÇÃO PRINCIPAL ----------------
-    if st.button("🔄 Converter para CSV"):
+    if converter:
         if not texto.strip():
             st.warning("Cole o texto do pedido antes de converter.")
         else:
@@ -179,7 +181,8 @@ with tab1:
                 "⬇️ Baixar CSV dos Itens",
                 csv_buffer.getvalue(),
                 file_name=nome_arquivo,
-                mime="text/csv"
+                mime="text/csv",
+                key="download_csv_itens"
             )
 
 # =====================================================
