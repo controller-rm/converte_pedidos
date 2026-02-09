@@ -5,6 +5,7 @@ import io
 import unicodedata
 import re
 from io import StringIO
+from datetime import datetime
 
 # =====================================================
 # CONFIGURAÇÃO DA PÁGINA (GLOBAL)
@@ -22,115 +23,107 @@ st.title("📦 Ferramentas de Pedido e Estoque")
 # =====================================================
 tab1, tab2 = st.tabs(["📦 CONVERTER PEDIDO WHATSAPP", "📊 COMPARAR ESTOQUES"])
 
+import streamlit as st
+import pandas as pd
+import re
+from io import StringIO, BytesIO
+from fpdf import FPDF
+
 # =====================================================
 # ABA 1: CONVERTER PEDIDO WHATSAPP
 # =====================================================
 with tab1:
     st.markdown("### 📦 CONVERTER PEDIDO WHATSAPP")
-    
-    # ---------------- CONFIG ----------------
     st.markdown("Cole abaixo o texto do pedido exatamente como recebido:")
-    
-    # Inicializar session_state se necessário
+
     if "texto_pedido" not in st.session_state:
         st.session_state.texto_pedido = ""
-    
+
     # ---------------- BOTÕES ----------------
-    col1, col2 = st.columns(2)
-    
+    col1, col2, col3 = st.columns(3)
+
     with col1:
-        converter = st.button("🔄 Converter para CSV", key="converter_csv")
-    
+        converter = st.button("🔄 Converter para CSV", key="btn_csv")
+
     with col2:
-        if st.button("🧹 Limpar texto", key="limpar_texto"):
-            st.session_state.texto_pedido = ""
-            st.rerun()
-    
+        limpar = st.button("🧹 Limpar texto", key="btn_limpar")
+        if limpar:
+            st.session_state["texto_pedido"] = ""
+
+
+    with col3:
+        gerar_pdf_btn = st.button("📄 Gerar PDF", key="btn_pdf")
+
+
     # ---------------- TEXT AREA ----------------
     texto = st.text_area(
         "📋 Texto do Pedido",
-        value=st.session_state.texto_pedido,
-        height=420,
-        key="texto_pedido"
+        value=st.session_state["texto_pedido"],
+        key="texto_pedido",
+        height=420
     )
-    
-    # ---------------- FUNÇÕES UTILITÁRIAS ----------------
-    def so_numeros(valor):
-        return re.sub(r"\D", "", valor or "")
-    
-    def parse_valor(valor_txt):
-        """
-        Converte valores nos formatos:
-        - BR: 15.406,15
-        - US: 15,406.15
-        - Simples: 15406.15 ou 15406,15
-        """
-        if not valor_txt:
-            return 0.0
-    
-        valor_txt = valor_txt.strip()
-    
-        # Se tem vírgula e ponto, decide pelo ÚLTIMO separador
-        if "," in valor_txt and "." in valor_txt:
-            if valor_txt.rfind(",") > valor_txt.rfind("."):
-                # Brasileiro → 15.406,15
-                valor_txt = valor_txt.replace(".", "").replace(",", ".")
-            else:
-                # Americano → 15,406.15
-                valor_txt = valor_txt.replace(",", "")
-        elif "," in valor_txt:
-            # Só vírgula → brasileiro simples
-            valor_txt = valor_txt.replace(".", "").replace(",", ".")
-        else:
-            # Só ponto → americano simples
-            valor_txt = valor_txt.replace(",", "")
-    
-        return float(valor_txt)
 
-    
-    def formatar_br(valor):
-        return f"{valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
-    
-    def formatar_codigo(codigo):
-        return codigo.zfill(7) + " "
-    
+
+    # ---------------- FUNÇÕES AUXILIARES ----------------
+    def so_numeros(v):
+        return re.sub(r"\D", "", v or "")
+
+    def parse_valor(v):
+        if not v:
+            return 0.0
+        v = v.strip()
+        if "," in v and "." in v:
+            if v.rfind(",") > v.rfind("."):
+                v = v.replace(".", "").replace(",", ".")
+            else:
+                v = v.replace(",", "")
+        elif "," in v:
+            v = v.replace(".", "").replace(",", ".")
+        else:
+            v = v.replace(",", "")
+        return float(v)
+
+    def formatar_br(v):
+        return f"{v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
+    def formatar_codigo(c):
+        return c.zfill(7)
+
     def formatar_cnpj(cnpj):
         return f'="{so_numeros(cnpj)}"'
-    
-    # ---------------- EXTRAÇÃO DE DADOS ----------------
+
+    # ---------------- EXTRAÇÃO DE ITENS ----------------
     def extrair_itens(texto):
         itens = []
-        
-        # Isola somente o bloco de itens
+
         bloco = re.search(
             r"📦\s*\*ITENS DO PEDIDO\*(.*?)💰\s*\*TOTAL DO PEDIDO",
             texto,
             re.DOTALL
         )
-        
+
         if not bloco:
             return pd.DataFrame()
-        
-        texto_itens = bloco.group(1)
-        
+
         padrao = re.findall(
             r"\*\s*(.*?)\s*\*\s*\n"
             r"Cód:\s*(\d+)\s*\n"
             r"(\d+)\s*x\s*R\$\s*([\d,.]+)\s*=\s*\*R\$\s*([\d,.]+)\*",
-            texto_itens
+            bloco.group(1)
         )
-        
-        for produto, codigo, qtd, unit, total in padrao:
+
+        for prod, cod, qtd, unit, total in padrao:
             itens.append({
-                "Codigo": codigo.strip(),
-                "Produto": produto.strip(),
+                "Codigo": cod,
+                "Produto": prod,
                 "Quantidade": int(qtd),
                 "Valor_Unitario": parse_valor(unit),
                 "Total": parse_valor(total)
             })
-        
+
         return pd.DataFrame(itens)
-    
+
+    # ---------------- EXTRAÇÃO CLIENTE ----------------
     def extrair_dados_cliente(texto):
         campos = {
             "Razao_Social": r"Razão Social:\s*(.*)",
@@ -139,70 +132,196 @@ with tab1:
             "Telefone": r"Telefone:\s*([\d()+\s-]+)",
             "Email": r"E-mail:\s*(.*)"
         }
-        
+
         dados = {}
         for campo, regex in campos.items():
-            match = re.search(regex, texto)
-            dados[campo] = match.group(1).strip() if match else ""
-        
+            m = re.search(regex, texto)
+            dados[campo] = m.group(1).strip() if m else ""
+
         return dados
-    
+
+    # ---------------- ENDEREÇO (2 LINHAS) ----------------
+    def extrair_endereco(texto):
+        padrao = r"📍 Endereço:\s*\n(.+)\n(.+)"
+        m = re.search(padrao, texto)
+        if m:
+            return m.group(1).strip(), m.group(2).strip()
+        return "", ""
+
+    # ---------------- TOTAL ----------------
     def extrair_total(texto):
-        match = re.search(r"TOTAL DO PEDIDO:\s*R\$\s*([\d,.]+)", texto)
-        return parse_valor(match.group(1)) if match else 0.0
-    
+        m = re.search(r"TOTAL DO PEDIDO:\s*R\$\s*([\d,.]+)", texto)
+        return parse_valor(m.group(1)) if m else 0.0
+
+    # ---------------- MONTAGEM PDF ----------------
+    def montar_dados_para_pdf(dados_cliente, df_itens, texto):
+        end1, end2 = extrair_endereco(texto)
+
+        dados_cliente_pdf = {
+            "razao": dados_cliente.get("Razao_Social", ""),
+            "endereco_linha1": end1,
+            "endereco_linha2": end2
+        }
+
+        carrinho = []
+        for _, r in df_itens.iterrows():
+            carrinho.append({
+                "codigo": r["Codigo"],
+                "descricao": r["Produto"],
+                "qtd": r["Quantidade"],
+                "preco": r["Valor_Unitario"],
+                "total": r["Total"]
+            })
+
+        return dados_cliente_pdf, carrinho
+
+    # =====================================================
+    # PDF OFICIAL ZIONNE
+    # =====================================================
+    class PedidoPDF(FPDF):
+
+        def header(self):
+            self.set_font("Arial", "B", 14)
+            self.cell(0, 8, "PEDIDO DE VENDA - FEIRA ABUP SHOW HOME", 0, 1, "C")
+            self.set_font("Arial", "", 9)
+            self.cell(
+                0, 5,
+                f"Emissão: {datetime.now().strftime('%d/%m/%Y %H:%M')}",
+                0, 1, "R"
+            )
+            self.ln(3)
+
+        def footer(self):
+            self.set_y(-22)
+            self.set_font("Arial", "", 8)
+            self.cell(0, 4, "Instagram: @zionne.oficial", 0, 1, "C")
+            self.cell(0, 4, "Telefone / WhatsApp: (41) 3043-0595", 0, 1, "C")
+            self.cell(0, 4, "Site: zionne.com.br | E-mail: comercial@zionne.com", 0, 1, "C")
+            self.cell(0, 4, "R. Gen. Mário Tourinho, 2465 - Curitiba - PR", 0, 0, "C")
+
+    def gerar_pdf(
+        dados_cliente,
+        carrinho,
+        total,
+        cond_pag,
+        frete,
+        obs,
+        cnpj,
+        telefone,
+        email,
+        ie
+    ):
+        pdf = PedidoPDF()
+        pdf.add_page()
+        pdf.set_auto_page_break(auto=True, margin=25)
+
+        pdf.set_font("Arial", "B", 10)
+        pdf.cell(0, 6, "DADOS DO CLIENTE", 0, 1)
+        pdf.set_font("Arial", "", 9)
+
+        pdf.cell(0, 5, f"Cliente: {dados_cliente.get('razao','')}", 0, 1)
+        pdf.cell(0, 5, f"CNPJ: {cnpj}    IE: {ie}", 0, 1)
+        pdf.cell(0, 5, f"Telefone: {telefone}    E-mail: {email}", 0, 1)
+
+        pdf.multi_cell(
+            0, 5,
+            f"Endereço:\n{dados_cliente.get('endereco_linha1','')}\n{dados_cliente.get('endereco_linha2','')}"
+        )
+
+        pdf.ln(3)
+
+        pdf.set_font("Arial", "B", 9)
+        pdf.cell(10, 6, "Item", 1)
+        pdf.cell(25, 6, "Código", 1)
+        pdf.cell(90, 6, "Descrição", 1)
+        pdf.cell(15, 6, "Qtde", 1)
+        pdf.cell(25, 6, "Vlr Unit", 1)
+        pdf.cell(25, 6, "Vlr Total", 1, 1)
+
+        pdf.set_font("Arial", "", 9)
+
+        for i, item in enumerate(carrinho, start=1):
+            pdf.cell(10, 6, str(i), 1)
+            pdf.cell(25, 6, item["codigo"], 1)
+            pdf.cell(90, 6, item["descricao"], 1)
+            pdf.cell(15, 6, str(item["qtd"]), 1, 0, "C")
+            pdf.cell(25, 6, f"{item['preco']:.2f}", 1, 0, "R")
+            pdf.cell(25, 6, f"{item['total']:.2f}", 1, 1, "R")
+
+        pdf.ln(4)
+        pdf.set_font("Arial", "B", 10)
+        pdf.cell(130, 6, "")
+        pdf.cell(30, 6, "TOTAL:", 1)
+        pdf.cell(30, 6, f"{total:.2f}", 1, 1, "R")
+
+        pdf.ln(4)
+        pdf.set_font("Arial", "", 9)
+        pdf.multi_cell(0, 5, f"Pagamento: {cond_pag}")
+        pdf.multi_cell(0, 5, f"Frete: {frete}")
+        pdf.multi_cell(0, 5, f"Observações: {obs}")
+
+        return pdf.output(dest="S").encode("latin1")
+
     # ---------------- AÇÃO PRINCIPAL ----------------
-    if converter:
+    if converter or gerar_pdf_btn:
         if not texto.strip():
-            st.warning("Cole o texto do pedido antes de converter.")
+            st.warning("Cole o texto do pedido antes de continuar.")
         else:
             df_itens = extrair_itens(texto)
             dados_cliente = extrair_dados_cliente(texto)
             total_pedido = extrair_total(texto)
-            
+
             cnpj = so_numeros(dados_cliente.get("CNPJ"))
             telefone = so_numeros(dados_cliente.get("Telefone"))
-            nome_arquivo = f"{cnpj}_{telefone}.csv"
-            
-            # ---- EXIBIÇÃO FORMATADA ----
-            df_exibicao = df_itens.copy()
-            df_exibicao["Valor_Unitario"] = df_exibicao["Valor_Unitario"].apply(formatar_br)
-            df_exibicao["Total"] = df_exibicao["Total"].apply(formatar_br)
-            
+            nome_arquivo = f"{cnpj}_{telefone}"
+
             st.subheader("📦 Itens do Pedido")
-            st.dataframe(df_exibicao, use_container_width=True)
-            
-            st.subheader("👤 Dados do Cliente")
-            st.json(dados_cliente)
-            
-            st.metric(
-                "💰 Total do Pedido",
-                f"R$ {formatar_br(total_pedido)}"
-            )
-            
-            # ---- CSV PADRÃO BR ----
-            df_csv = df_itens.copy()
-            
-            df_csv["Cnpj"] = formatar_cnpj(dados_cliente.get("CNPJ"))
-            df_csv["Codigo"] = df_csv["Codigo"].apply(formatar_codigo)
-            df_csv["Valor_Unitario"] = df_csv["Valor_Unitario"].apply(formatar_br)
-            df_csv["Total"] = df_csv["Total"].apply(formatar_br)
-            
-            # (opcional) organiza a ordem das colunas
-            df_csv = df_csv[
-                ["Cnpj", "Codigo", "Produto", "Quantidade", "Valor_Unitario", "Total"]
-            ]
-            
-            csv_buffer = StringIO()
-            df_csv.to_csv(csv_buffer, index=False, sep=";")
-            
-            st.download_button(
-                "⬇️ Baixar CSV dos Itens",
-                csv_buffer.getvalue(),
-                file_name=nome_arquivo,
-                mime="text/csv",
-                key="download_csv_itens"
-            )
+            st.dataframe(df_itens, use_container_width=True)
+
+            st.metric("💰 Total", f"R$ {formatar_br(total_pedido)}")
+
+            if converter:
+                df_csv = df_itens.copy()
+                df_csv["Cnpj"] = formatar_cnpj(dados_cliente.get("CNPJ"))
+                df_csv["Codigo"] = df_csv["Codigo"].apply(formatar_codigo)
+                df_csv["Valor_Unitario"] = df_csv["Valor_Unitario"].apply(formatar_br)
+                df_csv["Total"] = df_csv["Total"].apply(formatar_br)
+
+                csv = StringIO()
+                df_csv.to_csv(csv, index=False, sep=";")
+
+                st.download_button(
+                    "⬇️ Baixar CSV",
+                    csv.getvalue(),
+                    file_name=f"{nome_arquivo}.csv",
+                    mime="text/csv"
+                )
+
+            if gerar_pdf_btn:
+                dados_pdf, carrinho = montar_dados_para_pdf(
+                    dados_cliente, df_itens, texto
+                )
+
+                pdf_bytes = gerar_pdf(
+                    dados_cliente=dados_pdf,
+                    carrinho=carrinho,
+                    total=total_pedido,
+                    cond_pag="Conforme combinado",
+                    frete="A combinar",
+                    obs="Pedido gerado via WhatsApp",
+                    cnpj=dados_cliente.get("CNPJ"),
+                    telefone=dados_cliente.get("Telefone"),
+                    email=dados_cliente.get("Email"),
+                    ie=dados_cliente.get("IE")
+                )
+
+                st.download_button(
+                    "⬇️ Baixar PDF",
+                    pdf_bytes,
+                    file_name=f"{nome_arquivo}.pdf",
+                    mime="application/pdf"
+                )
+
 
 # =====================================================
 # ABA 2: COMPARAR ESTOQUES
