@@ -59,15 +59,34 @@ with tab1:
         return re.sub(r"\D", "", valor or "")
     
     def parse_valor(valor_txt):
-        """Converte valores US ou BR para float corretamente"""
+        """
+        Converte valores nos formatos:
+        - BR: 15.406,15
+        - US: 15,406.15
+        - Simples: 15406.15 ou 15406,15
+        """
+        if not valor_txt:
+            return 0.0
+    
         valor_txt = valor_txt.strip()
-        
-        if "," in valor_txt:
-            # padrão BR → 2.316,75
+    
+        # Se tem vírgula e ponto, decide pelo ÚLTIMO separador
+        if "," in valor_txt and "." in valor_txt:
+            if valor_txt.rfind(",") > valor_txt.rfind("."):
+                # Brasileiro → 15.406,15
+                valor_txt = valor_txt.replace(".", "").replace(",", ".")
+            else:
+                # Americano → 15,406.15
+                valor_txt = valor_txt.replace(",", "")
+        elif "," in valor_txt:
+            # Só vírgula → brasileiro simples
             valor_txt = valor_txt.replace(".", "").replace(",", ".")
-        # senão, padrão US → 2316.75
-        
+        else:
+            # Só ponto → americano simples
+            valor_txt = valor_txt.replace(",", "")
+    
         return float(valor_txt)
+
     
     def formatar_br(valor):
         return f"{valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
@@ -482,3 +501,4 @@ with tab2:
 
     else:
         st.info("⬆️ Envie os arquivos de estoque (QM e MF) e os pedidos para iniciar o processamento.")
+
